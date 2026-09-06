@@ -12,22 +12,22 @@
   @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap');
 
   :root {
-    --bg: #FAF7F2;
+    --bg: #F4F3F8;
     --card: #FFFFFF;
-    --border: #E5DCC8;
-    --track: #F0EBE0;
-    --ink: #22302C;
-    --ink-dim: #5A6B60;
-    --muted: #8A8070;
-    --faint: #B0A890;
-    --dark: #22302C;
-    --dark-bad: #3A1F1A;
-    --good: #7FC4A0;
-    --bad: #E8846B;
-    --bad-text: #8A4B23;
-    --bad-bg: #FBEFE9;
-    --bad-border: #E8B99B;
-    --accent: #2A5F5A;
+    --border: #D8D6E3;
+    --track: #E9E7F0;
+    --ink: #2E2A38;
+    --ink-dim: #6D6E71;
+    --muted: #8B8994;
+    --faint: #ADABB6;
+    --dark: #3A3550;
+    --dark-bad: #4A2038;
+    --good: #6D4AFF;
+    --bad: #C24E7A;
+    --bad-text: #8A2B57;
+    --bad-bg: #FBEAF2;
+    --bad-border: #E8A9C6;
+    --accent: #6D4AFF;
   }
 
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -67,6 +67,22 @@
   }
   .month-switch button:active { background: var(--track); }
   .month-label { font-size: 14px; font-weight: 600; min-width: 130px; text-align: center; }
+
+  .settings-row {
+    display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap;
+    margin-bottom: 20px;
+  }
+  .settings-field {
+    display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ink-dim); font-weight: 600;
+  }
+  .settings-field select, .settings-field input {
+    padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); font-size: 14px;
+    background: var(--card); color: var(--ink); min-width: 170px;
+  }
+  .settings-clear {
+    border: none; background: none; color: var(--accent); font-size: 12px; font-weight: 600;
+    padding: 8px 0; text-decoration: underline; text-underline-offset: 2px;
+  }
 
   .save-banner {
     background: var(--bad-bg); border: 1px solid var(--bad-border); color: var(--bad-text);
@@ -133,7 +149,7 @@
   .cat-name { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; }
   .cat-meta { display: flex; align-items: center; gap: 8px; }
   .cat-spent { font-size: 12px; color: var(--muted); white-space: nowrap; }
-  .cat-spent.over { color: #B0563E; }
+  .cat-spent.over { color: #8A2B57; }
   .budget-edit { width: 62px; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--border); font-size: 12px; text-align: right; }
   .icon-btn { border: none; background: none; color: var(--faint); padding: 4px; display: flex; align-items: center; }
   .cat-track { height: 5px; background: var(--track); border-radius: 3px; overflow: hidden; }
@@ -180,6 +196,27 @@
       <span class="month-label" id="monthLabel"></span>
       <button id="nextMonth" aria-label="Next month">›</button>
     </div>
+  </div>
+
+  <div class="settings-row sans">
+    <label class="settings-field">
+      <span>Currency</span>
+      <select id="currencySelect">
+        <option value="USD">USD ($)</option>
+        <option value="GBP">GBP (£)</option>
+        <option value="EUR">EUR (€)</option>
+        <option value="JPY">JPY (¥)</option>
+        <option value="CAD">CAD (C$)</option>
+        <option value="AUD">AUD (A$)</option>
+        <option value="INR">INR (₹)</option>
+        <option value="CHF">CHF</option>
+      </select>
+    </label>
+    <label class="settings-field">
+      <span>Total budget this month</span>
+      <input type="number" id="totalBudgetOverride" min="0" step="0.01" placeholder="Auto (sum of categories)">
+    </label>
+    <button id="clearOverrideBtn" class="settings-clear" type="button" title="Use sum of category budgets instead">Reset to auto</button>
   </div>
 
   <div id="overview" class="overview">
@@ -251,22 +288,26 @@
 
   var STORAGE_CATEGORIES = 'budget-tracker-categories';
   var STORAGE_EXPENSES_PREFIX = 'budget-tracker-expenses-';
+  var STORAGE_CURRENCY = 'budget-tracker-currency';
+  var STORAGE_OVERRIDE_PREFIX = 'budget-tracker-total-override-';
 
   var DEFAULT_CATEGORIES = [
-    { name: 'Housing', budget: 1200, color: '#2A5F5A' },
-    { name: 'Groceries', budget: 400, color: '#C97B4A' },
-    { name: 'Transport', budget: 200, color: '#7A6FB0' },
-    { name: 'Dining Out', budget: 150, color: '#D4A54A' },
-    { name: 'Utilities', budget: 180, color: '#4A8B8B' },
-    { name: 'Fun', budget: 120, color: '#B0567A' }
+    { name: 'Housing', budget: 1200, color: '#6D4AFF' },
+    { name: 'Groceries', budget: 400, color: '#6D6E71' },
+    { name: 'Transport', budget: 200, color: '#9B84FF' },
+    { name: 'Dining Out', budget: 150, color: '#A5A6A9' },
+    { name: 'Utilities', budget: 180, color: '#4B2FBF' },
+    { name: 'Fun', budget: 120, color: '#4A4B4E' }
   ];
 
-  var PALETTE = ['#2A5F5A', '#C97B4A', '#7A6FB0', '#D4A54A', '#4A8B8B', '#B0567A', '#5A7A9E', '#9E7A4A'];
+  var PALETTE = ['#6D4AFF', '#6D6E71', '#9B84FF', '#A5A6A9', '#4B2FBF', '#4A4B4E', '#C4B8FF', '#8E8F92'];
 
   var state = {
     month: currentMonthKey(),
     categories: [],
-    expenses: []
+    expenses: [],
+    currency: 'USD',
+    totalOverride: null // null = use sum of category budgets; number = manual total for this month
   };
 
   // ---------- storage helpers (with in-memory fallback) ----------
@@ -319,7 +360,12 @@
   }
 
   function fmt(n) {
-    return Number(n).toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
+    var currency = state.currency || 'USD';
+    try {
+      return Number(n).toLocaleString('en-US', { style: 'currency', currency: currency, maximumFractionDigits: 2 });
+    } catch (e) {
+      return Number(n).toFixed(2) + ' ' + currency;
+    }
   }
 
   function escapeHtml(str) {
@@ -355,6 +401,34 @@
     if (!ok) showSaveBanner();
   }
 
+  function loadCurrency() {
+    var raw = storageGet(STORAGE_CURRENCY);
+    return raw || 'USD';
+  }
+
+  function saveCurrency() {
+    var ok = storageSet(STORAGE_CURRENCY, state.currency);
+    if (!ok) showSaveBanner();
+  }
+
+  function loadTotalOverride(month) {
+    var raw = storageGet(STORAGE_OVERRIDE_PREFIX + month);
+    if (raw === null || raw === '') return null;
+    var v = parseFloat(raw);
+    return isNaN(v) ? null : v;
+  }
+
+  function saveTotalOverride() {
+    var key = STORAGE_OVERRIDE_PREFIX + state.month;
+    var ok;
+    if (state.totalOverride === null) {
+      try { window.localStorage.removeItem(key); ok = true; } catch (e) { ok = false; }
+    } else {
+      ok = storageSet(key, String(state.totalOverride));
+    }
+    if (!ok) showSaveBanner();
+  }
+
   // ---------- derived data ----------
   function spentByCategory() {
     var map = {};
@@ -366,6 +440,9 @@
   }
 
   function totalBudget() {
+    if (state.totalOverride !== null && state.totalOverride !== undefined) {
+      return state.totalOverride;
+    }
     return state.categories.reduce(function(s, c) { return s + Number(c.budget); }, 0);
   }
 
@@ -431,6 +508,14 @@
     document.getElementById('monthLabel').textContent = monthLabel(state.month);
     document.getElementById('expenseListTitle').textContent = monthLabel(state.month) + ' expenses (' + state.expenses.length + ')';
 
+    var currencySelectEl = document.getElementById('currencySelect');
+    if (currencySelectEl.value !== state.currency) currencySelectEl.value = state.currency;
+
+    var overrideInputEl = document.getElementById('totalBudgetOverride');
+    if (document.activeElement !== overrideInputEl) {
+      overrideInputEl.value = (state.totalOverride === null || state.totalOverride === undefined) ? '' : state.totalOverride;
+    }
+
     var spent = spentByCategory();
     var tBudget = totalBudget();
     var tSpent = totalSpent();
@@ -440,7 +525,8 @@
     var overviewEl = document.getElementById('overview');
     overviewEl.className = 'overview' + (isOverTotal ? ' over' : '');
     document.getElementById('ovAmount').textContent = fmt(tSpent);
-    document.getElementById('ovOf').textContent = 'of ' + fmt(tBudget) + ' budgeted';
+    var overrideActive = state.totalOverride !== null && state.totalOverride !== undefined;
+    document.getElementById('ovOf').textContent = 'of ' + fmt(tBudget) + ' budgeted' + (overrideActive ? ' (manual)' : '');
     var fillEl = document.getElementById('ovFill');
     fillEl.style.width = pct + '%';
     fillEl.className = 'ov-fill' + (isOverTotal ? ' over' : '');
@@ -490,7 +576,7 @@
               '<button class="icon-btn" data-role="remove-cat" data-cat="' + escapeHtml(c.name) + '" aria-label="Remove ' + escapeHtml(c.name) + '">✕</button>' +
             '</div>' +
           '</div>' +
-          '<div class="cat-track"><div class="cat-fill" style="width:' + catPct + '%;background:' + (over ? '#D97757' : c.color) + '"></div></div>' +
+          '<div class="cat-track"><div class="cat-fill" style="width:' + catPct + '%;background:' + (over ? '#C24E7A' : c.color) + '"></div></div>' +
         '</div>'
       );
     }).join('');
@@ -566,15 +652,36 @@
   }
 
   // ---------- events ----------
+  document.getElementById('currencySelect').onchange = function(ev) {
+    state.currency = ev.target.value;
+    saveCurrency();
+    render();
+  };
+
+  document.getElementById('totalBudgetOverride').onchange = function(ev) {
+    var v = parseFloat(ev.target.value);
+    state.totalOverride = (ev.target.value === '' || isNaN(v)) ? null : v;
+    saveTotalOverride();
+    render();
+  };
+
+  document.getElementById('clearOverrideBtn').onclick = function() {
+    state.totalOverride = null;
+    saveTotalOverride();
+    render();
+  };
+
   document.getElementById('prevMonth').onclick = function() {
     state.month = shiftMonthKey(state.month, -1);
     state.expenses = loadExpensesForMonth(state.month);
+    state.totalOverride = loadTotalOverride(state.month);
     render();
   };
 
   document.getElementById('nextMonth').onclick = function() {
     state.month = shiftMonthKey(state.month, 1);
     state.expenses = loadExpensesForMonth(state.month);
+    state.totalOverride = loadTotalOverride(state.month);
     render();
   };
 
@@ -630,6 +737,8 @@
   function init() {
     state.categories = loadCategories();
     state.expenses = loadExpensesForMonth(state.month);
+    state.currency = loadCurrency();
+    state.totalOverride = loadTotalOverride(state.month);
     render();
   }
 
@@ -639,3 +748,5 @@
 
 </body>
 </html>
+
+
