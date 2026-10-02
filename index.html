@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Budget">
 <meta name="mobile-web-app-capable" content="yes">
-<title>Monthly Budget Tracker</title>
+<title>Weekly Budget Tracker</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap');
 
@@ -163,9 +163,11 @@
   .cat-spent { font-size: 12px; color: var(--muted); white-space: nowrap; }
   .cat-spent.over { color: #8A2B57; }
   .budget-edit { width: 62px; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--border); font-size: 12px; text-align: right; }
+  .budget-readonly { font-size: 12px; color: var(--muted); font-weight: 600; min-width: 62px; text-align: right; display: inline-block; }
   .icon-btn { border: none; background: none; color: var(--faint); padding: 4px; display: flex; align-items: center; }
   .cat-track { height: 5px; background: var(--track); border-radius: 3px; overflow: hidden; }
   .cat-fill { height: 100%; transition: width 0.2s; }
+  .readonly-note { font-size: 11.5px; color: var(--faint); margin: 4px 0 10px; }
 
   .expense-form { display: flex; flex-direction: column; gap: 10px; }
   .expense-form select, .expense-form input { padding: 11px 12px; border-radius: 8px; border: 1px solid var(--border); width: 100%; }
@@ -201,7 +203,7 @@
   <div class="header">
     <div>
       <div class="eyebrow sans">Ledger</div>
-      <h1>Monthly Budget</h1>
+      <h1>Weekly Budget</h1>
     </div>
     <div class="month-switch sans">
       <button id="prevMonth" aria-label="Previous month">‹</button>
@@ -227,10 +229,10 @@
       </select>
     </label>
     <label class="settings-field">
-      <span>Total budget this month</span>
-      <input type="number" id="totalBudgetOverride" min="0" step="0.01" placeholder="Auto (sum of categories)">
+      <span>Override total budget this month</span>
+      <input type="number" id="totalBudgetOverride" min="0" step="0.01" placeholder="Auto (sum of weeks)">
     </label>
-    <button id="clearOverrideBtn" class="settings-clear" type="button" title="Use sum of category budgets instead">Reset to auto</button>
+    <button id="clearOverrideBtn" class="settings-clear" type="button" title="Use the sum of this month's weekly budgets instead">Reset to auto</button>
   </div>
 
   <div id="overview" class="overview">
@@ -266,10 +268,11 @@
         <div class="cat-head-row">
           <div>
             <div class="card-title sans" style="margin-bottom:2px">Categories & budgets</div>
-            <div class="card-subtitle sans" style="margin-bottom:0" id="budgetsSubtitle">This month's targets</div>
+            <div class="card-subtitle sans" style="margin-bottom:0" id="budgetsSubtitle">This week's targets</div>
           </div>
           <button class="add-cat-btn sans" id="toggleAddCat">+ Add category</button>
         </div>
+        <div class="readonly-note sans" id="readonlyNote" style="display:none">Budgets are set per week — switch to a week tab above to edit them. Totals here are added up across this month's weeks.</div>
         <form class="add-cat-form sans" id="addCatForm" style="display:none; margin-top:14px;">
           <input type="text" id="newCatName" placeholder="Category name" required>
           <input type="number" id="newCatBudget" class="budget-input" placeholder="Budget" min="0" step="0.01" required>
@@ -307,9 +310,10 @@
   'use strict';
 
   var STORAGE_CATEGORIES = 'budget-tracker-categories-v2';
-  var STORAGE_BUDGETS_PREFIX = 'budget-tracker-budgets-';
+  var STORAGE_WEEK_BUDGETS_PREFIX = 'budget-tracker-week-budgets-'; // v3: keyed by week-start date 'YYYY-MM-DD'
+  var STORAGE_OLD_MONTH_BUDGETS_PREFIX = 'budget-tracker-budgets-'; // v2: keyed by month, for migration
   var STORAGE_EXPENSES_ALL = 'budget-tracker-expenses-all-v2';
-  var STORAGE_EXPENSES_OLD_PREFIX = 'budget-tracker-expenses-'; // v1 per-month arrays, for migration
+  var STORAGE_EXPENSES_OLD_PREFIX = 'budget-tracker-expenses-'; // v1 per-month arrays
   var STORAGE_OLD_CATEGORIES = 'budget-tracker-categories'; // v1, had embedded budgets
   var STORAGE_CURRENCY = 'budget-tracker-currency';
   var STORAGE_OVERRIDE_PREFIX = 'budget-tracker-total-override-';
@@ -322,18 +326,18 @@
     { name: 'Utilities', color: '#4B2FBF' },
     { name: 'Fun', color: '#4A4B4E' }
   ];
-  var DEFAULT_BUDGETS = { 'Housing': 1200, 'Groceries': 400, 'Transport': 200, 'Dining Out': 150, 'Utilities': 180, 'Fun': 120 };
+  // sensible weekly starting points (roughly monthly/~4.33)
+  var DEFAULT_WEEKLY_BUDGETS = { 'Housing': 277, 'Groceries': 92, 'Transport': 46, 'Dining Out': 35, 'Utilities': 42, 'Fun': 28 };
 
   var PALETTE = ['#6D4AFF', '#6D6E71', '#9B84FF', '#A5A6A9', '#4B2FBF', '#4A4B4E', '#C4B8FF', '#8E8F92'];
 
   var state = {
     month: currentMonthKey(),
     categories: [],
-    budgets: {},           // { catName: amount } for the current month
     expenses: [],          // FLAT array of ALL expenses, each with .date = 'YYYY-MM-DD'
     currency: 'USD',
-    totalOverride: null,
-    scope: 'month'         // 'month' or a week key 'YYYY-MM-DD' (that week's Monday)
+    totalOverride: null,   // per month optional override of the headline total (whole-month scope only)
+    scope: 'month'         // 'month' or a week key 'YYYY-MM-DD' (that week's Saturday)
   };
 
   // ---------- storage helpers ----------
@@ -366,53 +370,47 @@
 
   // ---------- date helpers ----------
   function pad2(n) { return String(n).padStart(2, '0'); }
-
   function toDateStr(d) { return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
-
   function parseDateStr(s) {
     var parts = s.split('-').map(Number);
     return new Date(parts[0], parts[1] - 1, parts[2]);
   }
-
   function currentMonthKey() {
     var d = new Date();
     return d.getFullYear() + '-' + pad2(d.getMonth() + 1);
   }
-
   function todayStr() { return toDateStr(new Date()); }
-
-  function monthKeyOfDateStr(dateStr) { return dateStr.slice(0, 7); }
-
   function monthLabel(key) {
     var parts = key.split('-').map(Number);
     var d = new Date(parts[0], parts[1] - 1, 1);
     return d.toLocaleString('en-US', { month: 'long', year: 'numeric' });
   }
-
   function shiftMonthKey(key, delta) {
     var parts = key.split('-').map(Number);
     var d = new Date(parts[0], parts[1] - 1 + delta, 1);
     return d.getFullYear() + '-' + pad2(d.getMonth() + 1);
   }
-
   function shortDate(d) {
     return d.toLocaleString('en-US', { month: 'short', day: 'numeric' });
   }
 
-  // Monday-start week containing d
+  // Saturday-start week containing d (Saturday .. Friday)
   function weekStartOf(d) {
-    var day = d.getDay(); // 0 = Sun
-    var diff = (day === 0) ? -6 : 1 - day;
-    var monday = new Date(d.getFullYear(), d.getMonth(), d.getDate() + diff);
-    return monday;
+    var day = d.getDay(); // 0 = Sun ... 6 = Sat
+    var daysSinceSat = (day - 6 + 7) % 7;
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate() - daysSinceSat);
   }
 
-  function weeksOverlappingMonth(monthKey) {
+  // Weeks "assigned" to a month = weeks whose Saturday start date falls within that calendar month
+  function weeksForMonth(monthKey) {
     var parts = monthKey.split('-').map(Number);
     var firstOfMonth = new Date(parts[0], parts[1] - 1, 1);
     var lastOfMonth = new Date(parts[0], parts[1], 0);
-    var weeks = [];
+
     var cursor = weekStartOf(firstOfMonth);
+    if (cursor < firstOfMonth) cursor = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + 7);
+
+    var weeks = [];
     while (cursor <= lastOfMonth) {
       var end = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + 6);
       weeks.push({
@@ -424,6 +422,11 @@
       cursor = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + 7);
     }
     return weeks;
+  }
+
+  function shiftWeekKey(weekKey, deltaWeeks) {
+    var d = parseDateStr(weekKey);
+    return toDateStr(new Date(d.getFullYear(), d.getMonth(), d.getDate() + deltaWeeks * 7));
   }
 
   function fmt(n) {
@@ -441,13 +444,12 @@
     return div.innerHTML;
   }
 
-  // ---------- migration from v1 ----------
+  // ---------- migration from earlier versions ----------
   function migrateIfNeeded() {
-    // Expenses: merge any old per-month arrays into the new flat store
     if (storageGet(STORAGE_EXPENSES_ALL) === null) {
       var merged = [];
       storageAllKeys().forEach(function(k) {
-        if (k.indexOf(STORAGE_EXPENSES_OLD_PREFIX) === 0) {
+        if (k.indexOf(STORAGE_EXPENSES_OLD_PREFIX) === 0 && k.indexOf('budget-tracker-week-budgets-') !== 0) {
           try {
             var arr = JSON.parse(storageGet(k)) || [];
             arr.forEach(function(e) {
@@ -460,7 +462,6 @@
       storageSet(STORAGE_EXPENSES_ALL, JSON.stringify(merged));
     }
 
-    // Categories + budgets: if old single-list-with-embedded-budget format exists, split it out
     if (storageGet(STORAGE_CATEGORIES) === null) {
       var oldCatsRaw = storageGet(STORAGE_OLD_CATEGORIES);
       if (oldCatsRaw) {
@@ -468,12 +469,6 @@
           var oldCats = JSON.parse(oldCatsRaw);
           var newCats = oldCats.map(function(c) { return { name: c.name, color: c.color }; });
           storageSet(STORAGE_CATEGORIES, JSON.stringify(newCats));
-          // seed current month's budgets from the old flat structure if not already present
-          var seedBudgets = {};
-          oldCats.forEach(function(c) { seedBudgets[c.name] = c.budget; });
-          if (storageGet(STORAGE_BUDGETS_PREFIX + currentMonthKey()) === null) {
-            storageSet(STORAGE_BUDGETS_PREFIX + currentMonthKey(), JSON.stringify(seedBudgets));
-          }
         } catch (err) { /* ignore */ }
       }
     }
@@ -490,36 +485,47 @@
     if (!ok) showSaveBanner();
   }
 
-  // ---------- load / save: budgets (per month, with carry-over) ----------
-  function loadBudgetsForMonth(monthKey) {
-    var raw = storageGet(STORAGE_BUDGETS_PREFIX + monthKey);
+  // ---------- load / save: weekly budgets (with carry-over + v2 migration fallback) ----------
+  function loadWeekBudgets(weekKey) {
+    var raw = storageGet(STORAGE_WEEK_BUDGETS_PREFIX + weekKey);
     if (raw) { try { return JSON.parse(raw); } catch (e) {} }
 
-    // search backward for nearest previous month with saved budgets
-    var searchKey = monthKey;
-    for (var i = 0; i < 60; i++) {
-      searchKey = shiftMonthKey(searchKey, -1);
-      var prevRaw = storageGet(STORAGE_BUDGETS_PREFIX + searchKey);
+    // 1) search backward through previous weeks for the nearest saved record
+    var searchKey = weekKey;
+    for (var i = 0; i < 104; i++) {
+      searchKey = shiftWeekKey(searchKey, -1);
+      var prevRaw = storageGet(STORAGE_WEEK_BUDGETS_PREFIX + searchKey);
       if (prevRaw) {
         try {
           var carried = JSON.parse(prevRaw);
-          storageSet(STORAGE_BUDGETS_PREFIX + monthKey, JSON.stringify(carried));
+          storageSet(STORAGE_WEEK_BUDGETS_PREFIX + weekKey, JSON.stringify(carried));
           return carried;
         } catch (e) { break; }
       }
     }
 
-    // nothing found anywhere: fall back to defaults for known categories, 0 for custom ones
+    // 2) fall back to a v2 monthly budget for the month this week's start belongs to (one-time bootstrap)
+    var weekMonthKey = weekKey.slice(0, 7);
+    var oldMonthRaw = storageGet(STORAGE_OLD_MONTH_BUDGETS_PREFIX + weekMonthKey);
+    if (oldMonthRaw) {
+      try {
+        var oldBudgets = JSON.parse(oldMonthRaw);
+        storageSet(STORAGE_WEEK_BUDGETS_PREFIX + weekKey, JSON.stringify(oldBudgets));
+        return oldBudgets;
+      } catch (e) { /* ignore */ }
+    }
+
+    // 3) final fallback: sensible defaults for known categories, 0 for custom ones
     var fallback = {};
     state.categories.forEach(function(c) {
-      fallback[c.name] = DEFAULT_BUDGETS.hasOwnProperty(c.name) ? DEFAULT_BUDGETS[c.name] : 0;
+      fallback[c.name] = DEFAULT_WEEKLY_BUDGETS.hasOwnProperty(c.name) ? DEFAULT_WEEKLY_BUDGETS[c.name] : 0;
     });
-    storageSet(STORAGE_BUDGETS_PREFIX + monthKey, JSON.stringify(fallback));
+    storageSet(STORAGE_WEEK_BUDGETS_PREFIX + weekKey, JSON.stringify(fallback));
     return fallback;
   }
 
-  function saveBudgetsForMonth() {
-    var ok = storageSet(STORAGE_BUDGETS_PREFIX + state.month, JSON.stringify(state.budgets));
+  function saveWeekBudgets(weekKey, budgets) {
+    var ok = storageSet(STORAGE_WEEK_BUDGETS_PREFIX + weekKey, JSON.stringify(budgets));
     if (!ok) showSaveBanner();
   }
 
@@ -553,10 +559,6 @@
   }
 
   // ---------- derived data ----------
-  function expensesForMonth(monthKey) {
-    return state.expenses.filter(function(e) { return monthKeyOfDateStr(e.date) === monthKey; });
-  }
-
   function expensesForWeek(weekKey) {
     var start = parseDateStr(weekKey);
     var end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6);
@@ -564,6 +566,14 @@
       var d = parseDateStr(e.date);
       return d >= start && d <= end;
     });
+  }
+
+  // "Whole month" = union of every week assigned to this month (by week-start date)
+  function expensesForMonth(monthKey) {
+    var weeks = weeksForMonth(monthKey);
+    var all = [];
+    weeks.forEach(function(w) { all = all.concat(expensesForWeek(w.key)); });
+    return all;
   }
 
   function currentScopeExpenses() {
@@ -577,13 +587,30 @@
     return map;
   }
 
-  function totalBudget() {
-    if (state.totalOverride !== null && state.totalOverride !== undefined) return state.totalOverride;
-    return state.categories.reduce(function(s, c) { return s + Number(state.budgets[c.name] || 0); }, 0);
+  // sum of a given week's budgets across categories
+  function weekBudgetTotal(weekKey) {
+    var b = loadWeekBudgets(weekKey);
+    return state.categories.reduce(function(s, c) { return s + Number(b[c.name] || 0); }, 0);
   }
 
-  function totalSpentMonth() {
-    return expensesForMonth(state.month).reduce(function(s, e) { return s + Number(e.amount); }, 0);
+  // per-category budget totals for the month = sum across its assigned weeks
+  function categoryBudgetsForMonth(monthKey) {
+    var weeks = weeksForMonth(monthKey);
+    var totals = {};
+    state.categories.forEach(function(c) { totals[c.name] = 0; });
+    weeks.forEach(function(w) {
+      var b = loadWeekBudgets(w.key);
+      state.categories.forEach(function(c) { totals[c.name] += Number(b[c.name] || 0); });
+    });
+    return totals;
+  }
+
+  function totalBudgetForMonth(monthKey) {
+    if (monthKey === state.month && state.totalOverride !== null && state.totalOverride !== undefined) {
+      return state.totalOverride;
+    }
+    var weeks = weeksForMonth(monthKey);
+    return weeks.reduce(function(s, w) { return s + weekBudgetTotal(w.key); }, 0);
   }
 
   // ---------- pie chart (pure SVG) ----------
@@ -626,7 +653,7 @@
 
   // ---------- week tabs ----------
   function renderWeekTabs() {
-    var weeks = weeksOverlappingMonth(state.month);
+    var weeks = weeksForMonth(state.month);
     var html = '<button class="week-chip' + (state.scope === 'month' ? ' active' : '') + '" data-scope="month">Whole month</button>';
     weeks.forEach(function(w) {
       html += '<button class="week-chip' + (state.scope === w.key ? ' active' : '') + '" data-scope="' + w.key + '">' + escapeHtml(w.label) + '</button>';
@@ -642,22 +669,24 @@
 
   function scopeLabel() {
     if (state.scope === 'month') return 'This month';
-    var weeks = weeksOverlappingMonth(state.month);
+    var weeks = weeksForMonth(state.month);
     var w = weeks.find(function(w) { return w.key === state.scope; });
     return w ? ('Week of ' + w.label) : 'This week';
   }
 
   function defaultDateForScope() {
     if (state.scope === 'month') {
-      var todayInMonth = monthKeyOfDateStr(todayStr()) === state.month;
-      if (todayInMonth) return todayStr();
       var parts = state.month.split('-').map(Number);
-      return toDateStr(new Date(parts[0], parts[1] - 1, 1));
+      var monthStart = new Date(parts[0], parts[1] - 1, 1);
+      var monthEnd = new Date(parts[0], parts[1], 0);
+      var today = new Date();
+      if (today >= monthStart && today <= monthEnd) return todayStr();
+      return toDateStr(monthStart);
     } else {
       var start = parseDateStr(state.scope);
       var end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6);
-      var today = new Date();
-      if (today >= start && today <= end) return todayStr();
+      var t = new Date();
+      if (t >= start && t <= end) return todayStr();
       return state.scope;
     }
   }
@@ -676,11 +705,12 @@
 
     renderWeekTabs();
 
-    // ---- monthly overview (always whole-month, regardless of scope) ----
+    // ---- monthly overview (always whole-month rollup, regardless of scope) ----
     var monthExpenses = expensesForMonth(state.month);
     var spentMonth = spentByCategory(monthExpenses);
-    var tBudget = totalBudget();
-    var tSpent = totalSpentMonth();
+    var categoryBudgetsMonth = categoryBudgetsForMonth(state.month);
+    var tBudget = totalBudgetForMonth(state.month);
+    var tSpent = monthExpenses.reduce(function(s, e) { return s + Number(e.amount); }, 0);
     var isOverTotal = tSpent > tBudget && tBudget > 0;
     var pct = tBudget > 0 ? Math.min(100, (tSpent / tBudget) * 100) : 0;
 
@@ -692,7 +722,7 @@
     var fillEl = document.getElementById('ovFill');
     fillEl.style.width = pct + '%';
     fillEl.className = 'ov-fill' + (isOverTotal ? ' over' : '');
-    document.getElementById('ovPct').textContent = tBudget > 0 ? (pct.toFixed(0) + '% of total budget used') : 'Set category budgets to track progress';
+    document.getElementById('ovPct').textContent = tBudget > 0 ? (pct.toFixed(0) + '% of total budget used') : 'Set weekly budgets to track progress';
 
     var warnEl = document.getElementById('ovWarning');
     if (isOverTotal) {
@@ -702,34 +732,47 @@
       warnEl.style.display = 'none';
     }
 
-    var overCats = state.categories.filter(function(c) { return spentMonth[c.name] > (state.budgets[c.name] || 0); });
+    var overCats = state.categories.filter(function(c) { return spentMonth[c.name] > (categoryBudgetsMonth[c.name] || 0); });
     var catWarnEl = document.getElementById('catWarning');
     if (overCats.length > 0) {
       catWarnEl.style.display = 'block';
       document.getElementById('catWarningTitle').textContent =
         (overCats.length === 1 ? '1 category is' : overCats.length + ' categories are') + ' over its monthly budget';
       document.getElementById('catWarningList').innerHTML = overCats.map(function(c) {
-        return '<span>' + escapeHtml(c.name) + ': ' + fmt(spentMonth[c.name]) + ' / ' + fmt(state.budgets[c.name] || 0) + '</span>';
+        return '<span>' + escapeHtml(c.name) + ': ' + fmt(spentMonth[c.name]) + ' / ' + fmt(categoryBudgetsMonth[c.name] || 0) + '</span>';
       }).join('');
     } else {
       catWarnEl.style.display = 'none';
     }
 
-    // ---- categories & budgets card (always month-level targets) ----
-    document.getElementById('budgetsSubtitle').textContent = monthLabel(state.month) + "'s targets";
+    // ---- categories & budgets card ----
+    var isWeekScope = state.scope !== 'month';
+    var readonlyNoteEl = document.getElementById('readonlyNote');
+    readonlyNoteEl.style.display = isWeekScope ? 'none' : 'block';
+
+    var weekBudgetsObj = isWeekScope ? loadWeekBudgets(state.scope) : null;
+    var weekSpentObj = isWeekScope ? spentByCategory(expensesForWeek(state.scope)) : null;
+
+    document.getElementById('budgetsSubtitle').textContent = isWeekScope
+      ? ('Editable — ' + scopeLabel())
+      : (monthLabel(state.month) + ' total (added up across its weeks)');
+
     var catListEl = document.getElementById('categoryList');
     catListEl.innerHTML = state.categories.map(function(c) {
-      var budget = state.budgets[c.name] || 0;
-      var s = spentMonth[c.name] || 0;
-      var over = s > budget;
-      var catPct = budget > 0 ? Math.min(100, (s / budget) * 100) : 0;
+      var budget = isWeekScope ? (weekBudgetsObj[c.name] || 0) : (categoryBudgetsMonth[c.name] || 0);
+      var spent = isWeekScope ? (weekSpentObj[c.name] || 0) : (spentMonth[c.name] || 0);
+      var over = spent > budget;
+      var catPct = budget > 0 ? Math.min(100, (spent / budget) * 100) : 0;
+      var budgetControl = isWeekScope
+        ? '<input type="number" min="0" step="0.01" class="budget-edit" value="' + budget + '" data-role="week-budget-input" data-cat="' + escapeHtml(c.name) + '">'
+        : '<span class="budget-readonly">' + fmt(budget) + '</span>';
       return (
         '<div class="cat-row" data-cat="' + escapeHtml(c.name) + '">' +
           '<div class="cat-row-top">' +
             '<div class="cat-name sans"><span class="dot" style="background:' + c.color + '"></span>' + escapeHtml(c.name) + '</div>' +
             '<div class="cat-meta sans">' +
-              '<span class="cat-spent' + (over ? ' over' : '') + '">' + fmt(s) + ' / </span>' +
-              '<input type="number" min="0" step="0.01" class="budget-edit" value="' + budget + '" data-role="budget-input" data-cat="' + escapeHtml(c.name) + '">' +
+              '<span class="cat-spent' + (over ? ' over' : '') + '">' + fmt(spent) + ' / </span>' +
+              budgetControl +
               '<button class="icon-btn" data-role="remove-cat" data-cat="' + escapeHtml(c.name) + '" aria-label="Remove ' + escapeHtml(c.name) + '">✕</button>' +
             '</div>' +
           '</div>' +
@@ -798,12 +841,13 @@
   }
 
   function bindDynamicHandlers() {
-    document.querySelectorAll('[data-role="budget-input"]').forEach(function(input) {
+    document.querySelectorAll('[data-role="week-budget-input"]').forEach(function(input) {
       input.onchange = function() {
         var name = input.getAttribute('data-cat');
         var v = parseFloat(input.value);
-        state.budgets[name] = isNaN(v) ? 0 : v;
-        saveBudgetsForMonth();
+        var current = loadWeekBudgets(state.scope);
+        current[name] = isNaN(v) ? 0 : v;
+        saveWeekBudgets(state.scope, current);
         render();
       };
     });
@@ -813,8 +857,6 @@
         var name = btn.getAttribute('data-cat');
         state.categories = state.categories.filter(function(c) { return c.name !== name; });
         saveCategories();
-        delete state.budgets[name];
-        saveBudgetsForMonth();
         render();
       };
     });
@@ -851,7 +893,6 @@
 
   document.getElementById('prevMonth').onclick = function() {
     state.month = shiftMonthKey(state.month, -1);
-    state.budgets = loadBudgetsForMonth(state.month);
     state.totalOverride = loadTotalOverride(state.month);
     state.scope = 'month';
     render();
@@ -859,7 +900,6 @@
 
   document.getElementById('nextMonth').onclick = function() {
     state.month = shiftMonthKey(state.month, 1);
-    state.budgets = loadBudgetsForMonth(state.month);
     state.totalOverride = loadTotalOverride(state.month);
     state.scope = 'month';
     render();
@@ -882,8 +922,13 @@
     var color = PALETTE[state.categories.length % PALETTE.length];
     state.categories.push({ name: name, color: color });
     saveCategories();
-    state.budgets[name] = budget;
-    saveBudgetsForMonth();
+
+    // apply the starting weekly budget to the relevant week: the active week if one is selected,
+    // otherwise the first week of the currently viewed month
+    var anchorWeekKey = (state.scope !== 'month') ? state.scope : weeksForMonth(state.month)[0].key;
+    var anchorBudgets = loadWeekBudgets(anchorWeekKey);
+    anchorBudgets[name] = budget;
+    saveWeekBudgets(anchorWeekKey, anchorBudgets);
 
     nameInput.value = '';
     budgetInput.value = '';
@@ -922,7 +967,6 @@
     migrateIfNeeded();
     state.categories = loadCategories();
     state.currency = loadCurrency();
-    state.budgets = loadBudgetsForMonth(state.month);
     state.totalOverride = loadTotalOverride(state.month);
     state.expenses = loadAllExpenses();
     render();
