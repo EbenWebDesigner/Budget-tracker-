@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Budget">
 <meta name="mobile-web-app-capable" content="yes">
-<title>Weekly Budget Tracker</title>
+<title>Monthly Budget Tracker</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap');
 
@@ -163,11 +163,12 @@
   .cat-spent { font-size: 12px; color: var(--muted); white-space: nowrap; }
   .cat-spent.over { color: #8A2B57; }
   .budget-edit { width: 62px; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--border); font-size: 12px; text-align: right; }
-  .budget-readonly { font-size: 12px; color: var(--muted); font-weight: 600; min-width: 62px; text-align: right; display: inline-block; }
+  .budget-edit.overridden { border-color: var(--accent); background: #F3EFFF; }
   .icon-btn { border: none; background: none; color: var(--faint); padding: 4px; display: flex; align-items: center; }
   .cat-track { height: 5px; background: var(--track); border-radius: 3px; overflow: hidden; }
   .cat-fill { height: 100%; transition: width 0.2s; }
   .readonly-note { font-size: 11.5px; color: var(--faint); margin: 4px 0 10px; }
+  .override-tag { font-size: 10px; color: var(--accent); font-weight: 700; margin-left: 2px; }
 
   .expense-form { display: flex; flex-direction: column; gap: 10px; }
   .expense-form select, .expense-form input { padding: 11px 12px; border-radius: 8px; border: 1px solid var(--border); width: 100%; }
@@ -203,7 +204,7 @@
   <div class="header">
     <div>
       <div class="eyebrow sans">Ledger</div>
-      <h1>Weekly Budget</h1>
+      <h1>Monthly Budget</h1>
     </div>
     <div class="month-switch sans">
       <button id="prevMonth" aria-label="Previous month">‹</button>
@@ -230,9 +231,9 @@
     </label>
     <label class="settings-field">
       <span>Override total budget this month</span>
-      <input type="number" id="totalBudgetOverride" min="0" step="0.01" placeholder="Auto (sum of weeks)">
+      <input type="number" id="totalBudgetOverride" min="0" step="0.01" placeholder="Auto (sum of categories)">
     </label>
-    <button id="clearOverrideBtn" class="settings-clear" type="button" title="Use the sum of this month's weekly budgets instead">Reset to auto</button>
+    <button id="clearOverrideBtn" class="settings-clear" type="button" title="Use the sum of category budgets instead">Reset to auto</button>
   </div>
 
   <div id="overview" class="overview">
@@ -268,14 +269,14 @@
         <div class="cat-head-row">
           <div>
             <div class="card-title sans" style="margin-bottom:2px">Categories & budgets</div>
-            <div class="card-subtitle sans" style="margin-bottom:0" id="budgetsSubtitle">This week's targets</div>
+            <div class="card-subtitle sans" style="margin-bottom:0" id="budgetsSubtitle">This month's targets</div>
           </div>
           <button class="add-cat-btn sans" id="toggleAddCat">+ Add category</button>
         </div>
-        <div class="readonly-note sans" id="readonlyNote" style="display:none">Budgets are set per week — switch to a week tab above to edit them. Totals here are added up across this month's weeks.</div>
+        <div class="readonly-note sans" id="readonlyNote" style="display:none">This week's figure is the monthly budget split evenly across the month's weeks. Edit it to nudge just this week — clear it to go back to the automatic split.</div>
         <form class="add-cat-form sans" id="addCatForm" style="display:none; margin-top:14px;">
           <input type="text" id="newCatName" placeholder="Category name" required>
-          <input type="number" id="newCatBudget" class="budget-input" placeholder="Budget" min="0" step="0.01" required>
+          <input type="number" id="newCatBudget" class="budget-input" placeholder="Monthly budget" min="0" step="0.01" required>
           <button type="submit">Add</button>
         </form>
         <div id="categoryList" style="margin-top:14px;"></div>
@@ -310,8 +311,9 @@
   'use strict';
 
   var STORAGE_CATEGORIES = 'budget-tracker-categories-v2';
-  var STORAGE_WEEK_BUDGETS_PREFIX = 'budget-tracker-week-budgets-'; // v3: keyed by week-start date 'YYYY-MM-DD'
-  var STORAGE_OLD_MONTH_BUDGETS_PREFIX = 'budget-tracker-budgets-'; // v2: keyed by month, for migration
+  var STORAGE_MONTH_BUDGETS_PREFIX = 'budget-tracker-month-budgets-v4-'; // v4: keyed by month, {cat: monthlyAmount}
+  var STORAGE_WEEK_OVERRIDE_PREFIX = 'budget-tracker-week-override-v4-'; // v4: keyed by week-start date, {cat: overriddenAmount}
+  var STORAGE_OLD_MONTH_BUDGETS_PREFIX = 'budget-tracker-budgets-'; // v2, for migration
   var STORAGE_EXPENSES_ALL = 'budget-tracker-expenses-all-v2';
   var STORAGE_EXPENSES_OLD_PREFIX = 'budget-tracker-expenses-'; // v1 per-month arrays
   var STORAGE_OLD_CATEGORIES = 'budget-tracker-categories'; // v1, had embedded budgets
@@ -326,8 +328,7 @@
     { name: 'Utilities', color: '#4B2FBF' },
     { name: 'Fun', color: '#4A4B4E' }
   ];
-  // sensible weekly starting points (roughly monthly/~4.33)
-  var DEFAULT_WEEKLY_BUDGETS = { 'Housing': 277, 'Groceries': 92, 'Transport': 46, 'Dining Out': 35, 'Utilities': 42, 'Fun': 28 };
+  var DEFAULT_MONTH_BUDGETS = { 'Housing': 1200, 'Groceries': 400, 'Transport': 200, 'Dining Out': 150, 'Utilities': 180, 'Fun': 120 };
 
   var PALETTE = ['#6D4AFF', '#6D6E71', '#9B84FF', '#A5A6A9', '#4B2FBF', '#4A4B4E', '#C4B8FF', '#8E8F92'];
 
@@ -336,7 +337,7 @@
     categories: [],
     expenses: [],          // FLAT array of ALL expenses, each with .date = 'YYYY-MM-DD'
     currency: 'USD',
-    totalOverride: null,   // per month optional override of the headline total (whole-month scope only)
+    totalOverride: null,   // per month optional override of the headline total
     scope: 'month'         // 'month' or a week key 'YYYY-MM-DD' (that week's Saturday)
   };
 
@@ -380,6 +381,7 @@
     return d.getFullYear() + '-' + pad2(d.getMonth() + 1);
   }
   function todayStr() { return toDateStr(new Date()); }
+  function monthKeyOfDateStr(s) { return s.slice(0, 7); }
   function monthLabel(key) {
     var parts = key.split('-').map(Number);
     var d = new Date(parts[0], parts[1] - 1, 1);
@@ -424,10 +426,7 @@
     return weeks;
   }
 
-  function shiftWeekKey(weekKey, deltaWeeks) {
-    var d = parseDateStr(weekKey);
-    return toDateStr(new Date(d.getFullYear(), d.getMonth(), d.getDate() + deltaWeeks * 7));
-  }
+  function shiftMonthKeyRaw(key, delta) { return shiftMonthKey(key, delta); }
 
   function fmt(n) {
     var currency = state.currency || 'USD';
@@ -449,7 +448,7 @@
     if (storageGet(STORAGE_EXPENSES_ALL) === null) {
       var merged = [];
       storageAllKeys().forEach(function(k) {
-        if (k.indexOf(STORAGE_EXPENSES_OLD_PREFIX) === 0 && k.indexOf('budget-tracker-week-budgets-') !== 0) {
+        if (k.indexOf(STORAGE_EXPENSES_OLD_PREFIX) === 0) {
           try {
             var arr = JSON.parse(storageGet(k)) || [];
             arr.forEach(function(e) {
@@ -485,48 +484,81 @@
     if (!ok) showSaveBanner();
   }
 
-  // ---------- load / save: weekly budgets (with carry-over + v2 migration fallback) ----------
-  function loadWeekBudgets(weekKey) {
-    var raw = storageGet(STORAGE_WEEK_BUDGETS_PREFIX + weekKey);
+  // ---------- load / save: MONTHLY budgets (primary number, with carry-over) ----------
+  function loadMonthBudgets(monthKey) {
+    var raw = storageGet(STORAGE_MONTH_BUDGETS_PREFIX + monthKey);
     if (raw) { try { return JSON.parse(raw); } catch (e) {} }
 
-    // 1) search backward through previous weeks for the nearest saved record
-    var searchKey = weekKey;
-    for (var i = 0; i < 104; i++) {
-      searchKey = shiftWeekKey(searchKey, -1);
-      var prevRaw = storageGet(STORAGE_WEEK_BUDGETS_PREFIX + searchKey);
+    // 1) search backward through v4 months for the nearest saved record
+    var searchKey = monthKey;
+    for (var i = 0; i < 60; i++) {
+      searchKey = shiftMonthKey(searchKey, -1);
+      var prevRaw = storageGet(STORAGE_MONTH_BUDGETS_PREFIX + searchKey);
       if (prevRaw) {
         try {
           var carried = JSON.parse(prevRaw);
-          storageSet(STORAGE_WEEK_BUDGETS_PREFIX + weekKey, JSON.stringify(carried));
+          storageSet(STORAGE_MONTH_BUDGETS_PREFIX + monthKey, JSON.stringify(carried));
           return carried;
         } catch (e) { break; }
       }
     }
 
-    // 2) fall back to a v2 monthly budget for the month this week's start belongs to (one-time bootstrap)
-    var weekMonthKey = weekKey.slice(0, 7);
-    var oldMonthRaw = storageGet(STORAGE_OLD_MONTH_BUDGETS_PREFIX + weekMonthKey);
-    if (oldMonthRaw) {
+    // 2) one-time bootstrap from an older v2 monthly-budgets record for this exact month
+    var oldRaw = storageGet(STORAGE_OLD_MONTH_BUDGETS_PREFIX + monthKey);
+    if (oldRaw) {
       try {
-        var oldBudgets = JSON.parse(oldMonthRaw);
-        storageSet(STORAGE_WEEK_BUDGETS_PREFIX + weekKey, JSON.stringify(oldBudgets));
+        var oldBudgets = JSON.parse(oldRaw);
+        storageSet(STORAGE_MONTH_BUDGETS_PREFIX + monthKey, JSON.stringify(oldBudgets));
         return oldBudgets;
       } catch (e) { /* ignore */ }
     }
 
-    // 3) final fallback: sensible defaults for known categories, 0 for custom ones
+    // 3) search backward through v2 months too
+    searchKey = monthKey;
+    for (var j = 0; j < 60; j++) {
+      searchKey = shiftMonthKey(searchKey, -1);
+      var oldPrevRaw = storageGet(STORAGE_OLD_MONTH_BUDGETS_PREFIX + searchKey);
+      if (oldPrevRaw) {
+        try {
+          var oldCarried = JSON.parse(oldPrevRaw);
+          storageSet(STORAGE_MONTH_BUDGETS_PREFIX + monthKey, JSON.stringify(oldCarried));
+          return oldCarried;
+        } catch (e) { break; }
+      }
+    }
+
+    // 4) final fallback: sensible defaults for known categories, 0 for custom ones
     var fallback = {};
     state.categories.forEach(function(c) {
-      fallback[c.name] = DEFAULT_WEEKLY_BUDGETS.hasOwnProperty(c.name) ? DEFAULT_WEEKLY_BUDGETS[c.name] : 0;
+      fallback[c.name] = DEFAULT_MONTH_BUDGETS.hasOwnProperty(c.name) ? DEFAULT_MONTH_BUDGETS[c.name] : 0;
     });
-    storageSet(STORAGE_WEEK_BUDGETS_PREFIX + weekKey, JSON.stringify(fallback));
+    storageSet(STORAGE_MONTH_BUDGETS_PREFIX + monthKey, JSON.stringify(fallback));
     return fallback;
   }
 
-  function saveWeekBudgets(weekKey, budgets) {
-    var ok = storageSet(STORAGE_WEEK_BUDGETS_PREFIX + weekKey, JSON.stringify(budgets));
+  function saveMonthBudgets(monthKey, budgets) {
+    var ok = storageSet(STORAGE_MONTH_BUDGETS_PREFIX + monthKey, JSON.stringify(budgets));
     if (!ok) showSaveBanner();
+  }
+
+  // ---------- load / save: per-week overrides (only for nudged categories) ----------
+  function loadWeekOverrides(weekKey) {
+    var raw = storageGet(STORAGE_WEEK_OVERRIDE_PREFIX + weekKey);
+    if (raw) { try { return JSON.parse(raw); } catch (e) {} }
+    return {};
+  }
+  function saveWeekOverrides(weekKey, overrides) {
+    var ok = storageSet(STORAGE_WEEK_OVERRIDE_PREFIX + weekKey, JSON.stringify(overrides));
+    if (!ok) showSaveBanner();
+  }
+
+  // the amount a given week allocates to a category: override if set, else monthly/numWeeks
+  function weekAllocation(weekKey, catName, monthBudgetsForWeek, numWeeksForWeek) {
+    var overrides = loadWeekOverrides(weekKey);
+    if (overrides.hasOwnProperty(catName)) return { amount: Number(overrides[catName]), overridden: true };
+    var monthly = Number(monthBudgetsForWeek[catName] || 0);
+    var auto = numWeeksForWeek > 0 ? monthly / numWeeksForWeek : 0;
+    return { amount: auto, overridden: false };
   }
 
   // ---------- load / save: expenses (flat) ----------
@@ -568,12 +600,9 @@
     });
   }
 
-  // "Whole month" = union of every week assigned to this month (by week-start date)
+  // "Whole month" = plain calendar-month filter on the expense's own date
   function expensesForMonth(monthKey) {
-    var weeks = weeksForMonth(monthKey);
-    var all = [];
-    weeks.forEach(function(w) { all = all.concat(expensesForWeek(w.key)); });
-    return all;
+    return state.expenses.filter(function(e) { return monthKeyOfDateStr(e.date) === monthKey; });
   }
 
   function currentScopeExpenses() {
@@ -587,30 +616,11 @@
     return map;
   }
 
-  // sum of a given week's budgets across categories
-  function weekBudgetTotal(weekKey) {
-    var b = loadWeekBudgets(weekKey);
-    return state.categories.reduce(function(s, c) { return s + Number(b[c.name] || 0); }, 0);
-  }
-
-  // per-category budget totals for the month = sum across its assigned weeks
-  function categoryBudgetsForMonth(monthKey) {
-    var weeks = weeksForMonth(monthKey);
-    var totals = {};
-    state.categories.forEach(function(c) { totals[c.name] = 0; });
-    weeks.forEach(function(w) {
-      var b = loadWeekBudgets(w.key);
-      state.categories.forEach(function(c) { totals[c.name] += Number(b[c.name] || 0); });
-    });
-    return totals;
-  }
-
-  function totalBudgetForMonth(monthKey) {
+  function totalBudgetForMonth(monthKey, monthBudgets) {
     if (monthKey === state.month && state.totalOverride !== null && state.totalOverride !== undefined) {
       return state.totalOverride;
     }
-    var weeks = weeksForMonth(monthKey);
-    return weeks.reduce(function(s, w) { return s + weekBudgetTotal(w.key); }, 0);
+    return state.categories.reduce(function(s, c) { return s + Number(monthBudgets[c.name] || 0); }, 0);
   }
 
   // ---------- pie chart (pure SVG) ----------
@@ -705,11 +715,14 @@
 
     renderWeekTabs();
 
-    // ---- monthly overview (always whole-month rollup, regardless of scope) ----
+    var monthBudgets = loadMonthBudgets(state.month);
+    var weeksThisMonth = weeksForMonth(state.month);
+    var numWeeks = weeksThisMonth.length;
+
+    // ---- monthly overview (always whole-month, direct monthly budget) ----
     var monthExpenses = expensesForMonth(state.month);
     var spentMonth = spentByCategory(monthExpenses);
-    var categoryBudgetsMonth = categoryBudgetsForMonth(state.month);
-    var tBudget = totalBudgetForMonth(state.month);
+    var tBudget = totalBudgetForMonth(state.month, monthBudgets);
     var tSpent = monthExpenses.reduce(function(s, e) { return s + Number(e.amount); }, 0);
     var isOverTotal = tSpent > tBudget && tBudget > 0;
     var pct = tBudget > 0 ? Math.min(100, (tSpent / tBudget) * 100) : 0;
@@ -722,7 +735,7 @@
     var fillEl = document.getElementById('ovFill');
     fillEl.style.width = pct + '%';
     fillEl.className = 'ov-fill' + (isOverTotal ? ' over' : '');
-    document.getElementById('ovPct').textContent = tBudget > 0 ? (pct.toFixed(0) + '% of total budget used') : 'Set weekly budgets to track progress';
+    document.getElementById('ovPct').textContent = tBudget > 0 ? (pct.toFixed(0) + '% of total budget used') : 'Set category budgets to track progress';
 
     var warnEl = document.getElementById('ovWarning');
     if (isOverTotal) {
@@ -732,14 +745,14 @@
       warnEl.style.display = 'none';
     }
 
-    var overCats = state.categories.filter(function(c) { return spentMonth[c.name] > (categoryBudgetsMonth[c.name] || 0); });
+    var overCats = state.categories.filter(function(c) { return spentMonth[c.name] > (monthBudgets[c.name] || 0); });
     var catWarnEl = document.getElementById('catWarning');
     if (overCats.length > 0) {
       catWarnEl.style.display = 'block';
       document.getElementById('catWarningTitle').textContent =
         (overCats.length === 1 ? '1 category is' : overCats.length + ' categories are') + ' over its monthly budget';
       document.getElementById('catWarningList').innerHTML = overCats.map(function(c) {
-        return '<span>' + escapeHtml(c.name) + ': ' + fmt(spentMonth[c.name]) + ' / ' + fmt(categoryBudgetsMonth[c.name] || 0) + '</span>';
+        return '<span>' + escapeHtml(c.name) + ': ' + fmt(spentMonth[c.name]) + ' / ' + fmt(monthBudgets[c.name] || 0) + '</span>';
       }).join('');
     } else {
       catWarnEl.style.display = 'none';
@@ -748,31 +761,39 @@
     // ---- categories & budgets card ----
     var isWeekScope = state.scope !== 'month';
     var readonlyNoteEl = document.getElementById('readonlyNote');
-    readonlyNoteEl.style.display = isWeekScope ? 'none' : 'block';
+    readonlyNoteEl.style.display = isWeekScope ? 'block' : 'none';
 
-    var weekBudgetsObj = isWeekScope ? loadWeekBudgets(state.scope) : null;
     var weekSpentObj = isWeekScope ? spentByCategory(expensesForWeek(state.scope)) : null;
 
     document.getElementById('budgetsSubtitle').textContent = isWeekScope
-      ? ('Editable — ' + scopeLabel())
-      : (monthLabel(state.month) + ' total (added up across its weeks)');
+      ? ('This week\'s share — ' + scopeLabel())
+      : (monthLabel(state.month) + "'s targets (edit to set the monthly amount)");
 
     var catListEl = document.getElementById('categoryList');
     catListEl.innerHTML = state.categories.map(function(c) {
-      var budget = isWeekScope ? (weekBudgetsObj[c.name] || 0) : (categoryBudgetsMonth[c.name] || 0);
-      var spent = isWeekScope ? (weekSpentObj[c.name] || 0) : (spentMonth[c.name] || 0);
+      var budget, spent, overridden = false;
+      if (isWeekScope) {
+        var alloc = weekAllocation(state.scope, c.name, monthBudgets, numWeeks);
+        budget = alloc.amount;
+        overridden = alloc.overridden;
+        spent = weekSpentObj[c.name] || 0;
+      } else {
+        budget = monthBudgets[c.name] || 0;
+        spent = spentMonth[c.name] || 0;
+      }
       var over = spent > budget;
       var catPct = budget > 0 ? Math.min(100, (spent / budget) * 100) : 0;
-      var budgetControl = isWeekScope
-        ? '<input type="number" min="0" step="0.01" class="budget-edit" value="' + budget + '" data-role="week-budget-input" data-cat="' + escapeHtml(c.name) + '">'
-        : '<span class="budget-readonly">' + fmt(budget) + '</span>';
+      var inputRole = isWeekScope ? 'week-override-input' : 'month-budget-input';
+      var inputClass = 'budget-edit' + (overridden ? ' overridden' : '');
+      var overrideTag = overridden ? '<span class="override-tag" title="Manually set for this week">●</span>' : '';
       return (
         '<div class="cat-row" data-cat="' + escapeHtml(c.name) + '">' +
           '<div class="cat-row-top">' +
             '<div class="cat-name sans"><span class="dot" style="background:' + c.color + '"></span>' + escapeHtml(c.name) + '</div>' +
             '<div class="cat-meta sans">' +
               '<span class="cat-spent' + (over ? ' over' : '') + '">' + fmt(spent) + ' / </span>' +
-              budgetControl +
+              '<input type="number" min="0" step="0.01" class="' + inputClass + '" value="' + (Math.round(budget * 100) / 100) + '" data-role="' + inputRole + '" data-cat="' + escapeHtml(c.name) + '">' +
+              overrideTag +
               '<button class="icon-btn" data-role="remove-cat" data-cat="' + escapeHtml(c.name) + '" aria-label="Remove ' + escapeHtml(c.name) + '">✕</button>' +
             '</div>' +
           '</div>' +
@@ -841,13 +862,28 @@
   }
 
   function bindDynamicHandlers() {
-    document.querySelectorAll('[data-role="week-budget-input"]').forEach(function(input) {
+    document.querySelectorAll('[data-role="month-budget-input"]').forEach(function(input) {
       input.onchange = function() {
         var name = input.getAttribute('data-cat');
         var v = parseFloat(input.value);
-        var current = loadWeekBudgets(state.scope);
-        current[name] = isNaN(v) ? 0 : v;
-        saveWeekBudgets(state.scope, current);
+        var budgets = loadMonthBudgets(state.month);
+        budgets[name] = isNaN(v) ? 0 : v;
+        saveMonthBudgets(state.month, budgets);
+        render();
+      };
+    });
+
+    document.querySelectorAll('[data-role="week-override-input"]').forEach(function(input) {
+      input.onchange = function() {
+        var name = input.getAttribute('data-cat');
+        var overrides = loadWeekOverrides(state.scope);
+        if (input.value === '') {
+          delete overrides[name]; // revert to automatic split
+        } else {
+          var v = parseFloat(input.value);
+          if (!isNaN(v)) overrides[name] = v;
+        }
+        saveWeekOverrides(state.scope, overrides);
         render();
       };
     });
@@ -857,6 +893,9 @@
         var name = btn.getAttribute('data-cat');
         state.categories = state.categories.filter(function(c) { return c.name !== name; });
         saveCategories();
+        var budgets = loadMonthBudgets(state.month);
+        delete budgets[name];
+        saveMonthBudgets(state.month, budgets);
         render();
       };
     });
@@ -923,12 +962,9 @@
     state.categories.push({ name: name, color: color });
     saveCategories();
 
-    // apply the starting weekly budget to the relevant week: the active week if one is selected,
-    // otherwise the first week of the currently viewed month
-    var anchorWeekKey = (state.scope !== 'month') ? state.scope : weeksForMonth(state.month)[0].key;
-    var anchorBudgets = loadWeekBudgets(anchorWeekKey);
-    anchorBudgets[name] = budget;
-    saveWeekBudgets(anchorWeekKey, anchorBudgets);
+    var budgets = loadMonthBudgets(state.month);
+    budgets[name] = budget;
+    saveMonthBudgets(state.month, budgets);
 
     nameInput.value = '';
     budgetInput.value = '';
