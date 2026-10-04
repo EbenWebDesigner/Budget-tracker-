@@ -273,7 +273,8 @@
           </div>
           <button class="add-cat-btn sans" id="toggleAddCat">+ Add category</button>
         </div>
-        <div class="readonly-note sans" id="readonlyNote" style="display:none">This week's figure is the monthly budget split evenly across the month's weeks. Edit it to nudge just this week — clear it to go back to the automatic split.</div>
+        <div class="readonly-note sans" id="readonlyNote" style="display:none">This week's figure is the monthly budget split evenly across the month's weeks. Edit it to nudge just this week — clear it to go back to the automatic split. To remove a category entirely, switch to "Whole month".</div>
+        <div class="readonly-note sans" id="addCatHint" style="display:none; margin-bottom:8px;"></div>
         <form class="add-cat-form sans" id="addCatForm" style="display:none; margin-top:14px;">
           <input type="text" id="newCatName" placeholder="Category name" required>
           <input type="number" id="newCatBudget" class="budget-input" placeholder="Monthly budget" min="0" step="0.01" required>
@@ -786,6 +787,8 @@
       var inputRole = isWeekScope ? 'week-override-input' : 'month-budget-input';
       var inputClass = 'budget-edit' + (overridden ? ' overridden' : '');
       var overrideTag = overridden ? '<span class="override-tag" title="Manually set for this week">●</span>' : '';
+      var removeBtn = isWeekScope ? '' :
+        '<button class="icon-btn" data-role="remove-cat" data-cat="' + escapeHtml(c.name) + '" aria-label="Remove ' + escapeHtml(c.name) + '" title="Remove this category entirely">✕</button>';
       return (
         '<div class="cat-row" data-cat="' + escapeHtml(c.name) + '">' +
           '<div class="cat-row-top">' +
@@ -794,7 +797,7 @@
               '<span class="cat-spent' + (over ? ' over' : '') + '">' + fmt(spent) + ' / </span>' +
               '<input type="number" min="0" step="0.01" class="' + inputClass + '" value="' + (Math.round(budget * 100) / 100) + '" data-role="' + inputRole + '" data-cat="' + escapeHtml(c.name) + '">' +
               overrideTag +
-              '<button class="icon-btn" data-role="remove-cat" data-cat="' + escapeHtml(c.name) + '" aria-label="Remove ' + escapeHtml(c.name) + '">✕</button>' +
+              removeBtn +
             '</div>' +
           '</div>' +
           '<div class="cat-track"><div class="cat-fill" style="width:' + catPct + '%;background:' + (over ? '#C24E7A' : c.color) + '"></div></div>' +
@@ -946,7 +949,22 @@
 
   document.getElementById('toggleAddCat').onclick = function() {
     var form = document.getElementById('addCatForm');
-    form.style.display = form.style.display === 'none' ? 'flex' : 'none';
+    var hint = document.getElementById('addCatHint');
+    var budgetInput = document.getElementById('newCatBudget');
+    var opening = form.style.display === 'none';
+    form.style.display = opening ? 'flex' : 'none';
+    if (opening) {
+      if (state.scope === 'month') {
+        budgetInput.placeholder = 'Monthly budget';
+        hint.textContent = "This is the monthly figure — it'll be split evenly across this month's weeks.";
+      } else {
+        budgetInput.placeholder = "This week's budget";
+        hint.textContent = "This is what you'll budget each week — the monthly total is calculated from it automatically.";
+      }
+      hint.style.display = 'block';
+    } else {
+      hint.style.display = 'none';
+    }
   };
 
   document.getElementById('addCatForm').addEventListener('submit', function(ev) {
@@ -963,12 +981,21 @@
     saveCategories();
 
     var budgets = loadMonthBudgets(state.month);
-    budgets[name] = budget;
+    if (state.scope === 'month') {
+      // entered value IS the monthly figure — auto-splits evenly across all weeks
+      budgets[name] = budget;
+    } else {
+      // entered value is THIS WEEK's amount — derive the monthly figure so every week
+      // (including this one) auto-splits back to exactly what was typed
+      var numWeeks = weeksForMonth(state.month).length;
+      budgets[name] = budget * numWeeks;
+    }
     saveMonthBudgets(state.month, budgets);
 
     nameInput.value = '';
     budgetInput.value = '';
     document.getElementById('addCatForm').style.display = 'none';
+    document.getElementById('addCatHint').style.display = 'none';
     render();
   });
 
