@@ -168,6 +168,12 @@
   .cat-track { height: 5px; background: var(--track); border-radius: 3px; overflow: hidden; }
   .cat-fill { height: 100%; transition: width 0.2s; }
   .readonly-note { font-size: 11.5px; color: var(--faint); margin: 4px 0 10px; }
+  .week-total-line {
+    font-size: 13px; font-weight: 700; margin: 10px 0 2px;
+    padding: 10px 12px; border-radius: 10px; background: var(--track); color: var(--ink);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .week-total-line.over { background: var(--bad-bg); color: var(--bad-text); }
   .override-tag { font-size: 10px; color: var(--accent); font-weight: 700; margin-left: 2px; }
 
   .expense-form { display: flex; flex-direction: column; gap: 10px; }
@@ -273,6 +279,7 @@
           </div>
           <button class="add-cat-btn sans" id="toggleAddCat">+ Add category</button>
         </div>
+        <div class="week-total-line sans" id="weekTotalLine" style="display:none"></div>
         <div class="readonly-note sans" id="readonlyNote" style="display:none">This week's figure is the monthly budget split evenly across the month's weeks. Edit it to nudge just this week — clear it to go back to the automatic split. To remove a category entirely, switch to "Whole month".</div>
         <div class="readonly-note sans" id="addCatHint" style="display:none; margin-bottom:8px;"></div>
         <form class="add-cat-form sans" id="addCatForm" style="display:none; margin-top:14px;">
@@ -785,6 +792,22 @@
     var visibleCategories = isWeekScope
       ? state.categories.filter(function(c) { return excludedThisWeek.indexOf(c.name) === -1; })
       : state.categories;
+
+    var weekTotalLineEl = document.getElementById('weekTotalLine');
+    if (isWeekScope) {
+      var weekTotalBudget = 0;
+      state.categories.forEach(function(c) {
+        var alloc = weekAllocation(state.scope, c.name, monthBudgets, numWeeks);
+        weekTotalBudget += alloc.amount;
+      });
+      var weekTotalSpent = Object.keys(weekSpentObj).reduce(function(s, k) { return s + Number(weekSpentObj[k] || 0); }, 0);
+      var weekOver = weekTotalSpent > weekTotalBudget && weekTotalBudget > 0;
+      weekTotalLineEl.style.display = 'flex';
+      weekTotalLineEl.className = 'week-total-line sans' + (weekOver ? ' over' : '');
+      weekTotalLineEl.innerHTML = '<span>Total this week</span><span>' + fmt(weekTotalSpent) + ' of ' + fmt(weekTotalBudget) + (weekOver ? ' — over' : '') + '</span>';
+    } else {
+      weekTotalLineEl.style.display = 'none';
+    }
 
     var catListEl = document.getElementById('categoryList');
     catListEl.innerHTML = visibleCategories.map(function(c) {
