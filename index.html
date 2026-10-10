@@ -314,6 +314,7 @@
   var STORAGE_CATEGORIES = 'budget-tracker-categories-v2';
   var STORAGE_MONTH_BUDGETS_PREFIX = 'budget-tracker-month-budgets-v4-'; // v4: keyed by month, {cat: monthlyAmount}
   var STORAGE_WEEK_OVERRIDE_PREFIX = 'budget-tracker-week-override-v4-'; // v4: keyed by week-start date, {cat: overriddenAmount}
+  var STORAGE_WEEK_EXCLUDED_PREFIX = 'budget-tracker-week-excluded-v4-'; // v4: keyed by week-start date, [catName, ...] hidden from that week's budget list only
   var STORAGE_OLD_MONTH_BUDGETS_PREFIX = 'budget-tracker-budgets-'; // v2, for migration
   var STORAGE_EXPENSES_ALL = 'budget-tracker-expenses-all-v2';
   var STORAGE_EXPENSES_OLD_PREFIX = 'budget-tracker-expenses-'; // v1 per-month arrays
@@ -553,6 +554,16 @@
     if (!ok) showSaveBanner();
   }
 
+  function loadWeekExcluded(weekKey) {
+    var raw = storageGet(STORAGE_WEEK_EXCLUDED_PREFIX + weekKey);
+    if (raw) { try { return JSON.parse(raw); } catch (e) {} }
+    return [];
+  }
+  function saveWeekExcluded(weekKey, list) {
+    var ok = storageSet(STORAGE_WEEK_EXCLUDED_PREFIX + weekKey, JSON.stringify(list));
+    if (!ok) showSaveBanner();
+  }
+
   // the amount a given week allocates to a category: override if set, else monthly/numWeeks
   function weekAllocation(weekKey, catName, monthBudgetsForWeek, numWeeksForWeek) {
     var overrides = loadWeekOverrides(weekKey);
@@ -770,8 +781,13 @@
       ? ('This week\'s share — ' + scopeLabel())
       : (monthLabel(state.month) + "'s targets (edit to set the monthly amount)");
 
+    var excludedThisWeek = isWeekScope ? loadWeekExcluded(state.scope) : [];
+    var visibleCategories = isWeekScope
+      ? state.categories.filter(function(c) { return excludedThisWeek.indexOf(c.name) === -1; })
+      : state.categories;
+
     var catListEl = document.getElementById('categoryList');
-    catListEl.innerHTML = state.categories.map(function(c) {
+    catListEl.innerHTML = visibleCategories.map(function(c) {
       var budget, spent, overridden = false;
       if (isWeekScope) {
         var alloc = weekAllocation(state.scope, c.name, monthBudgets, numWeeks);
@@ -787,8 +803,9 @@
       var inputRole = isWeekScope ? 'week-override-input' : 'month-budget-input';
       var inputClass = 'budget-edit' + (overridden ? ' overridden' : '');
       var overrideTag = overridden ? '<span class="override-tag" title="Manually set for this week">●</span>' : '';
-      var removeBtn = isWeekScope ? '' :
-        '<button class="icon-btn" data-role="remove-cat" data-cat="' + escapeHtml(c.name) + '" aria-label="Remove ' + escapeHtml(c.name) + '" title="Remove this category entirely">✕</button>';
+      var removeRole = isWeekScope ? 'hide-cat-week' : 'remove-cat';
+      var removeTitle = isWeekScope ? 'Hide from this week only' : 'Remove this category entirely';
+      var removeBtn = '<button class="icon-btn" data-role="' + removeRole + '" data-cat="' + escapeHtml(c.name) + '" aria-label="' + removeTitle + '" title="' + removeTitle + '">✕</button>';
       return (
         '<div class="cat-row" data-cat="' + escapeHtml(c.name) + '">' +
           '<div class="cat-row-top">' +
@@ -804,6 +821,13 @@
         '</div>'
       );
     }).join('');
+
+    if (isWeekScope && excludedThisWeek.length > 0) {
+      catListEl.innerHTML += '<div class="readonly-note sans" style="margin-top:10px;">Hidden this week: ' +
+        excludedThisWeek.map(function(name) {
+          return '<a href="#" data-role="restore-cat-week" data-cat="' + escapeHtml(name) + '" style="color:var(--accent); text-decoration:underline; margin-right:10px;">' + escapeHtml(name) + ' ↺</a>';
+        }).join('') + '</div>';
+    }
 
     // ---- scoped view: chart, expense form, expense list ----
     var scopeExpenses = currentScopeExpenses();
@@ -899,6 +923,29 @@
         var budgets = loadMonthBudgets(state.month);
         delete budgets[name];
         saveMonthBudgets(state.month, budgets);
+        render();
+      };
+    });
+
+    // week-scope ✕: hides this category from THIS week only — the category itself,
+    // its monthly budget, and every other week are untouched
+    document.querySelectorAll('[data-role="hide-cat-week"]').forEach(function(btn) {
+      btn.onclick = function() {
+        var name = btn.getAttribute('data-cat');
+        var excluded = loadWeekExcluded(state.scope);
+        if (excluded.indexOf(name) === -1) excluded.push(name);
+        saveWeekExcluded(state.scope, excluded);
+        render();
+      };
+    });
+
+    document.querySelectorAll('[data-role="restore-cat-week"]').forEach(function(link) {
+      link.onclick = function(ev) {
+        ev.preventDefault();
+        var name = link.getAttribute('data-cat');
+        var excluded = loadWeekExcluded(state.scope);
+        excluded = excluded.filter(function(n) { return n !== name; });
+        saveWeekExcluded(state.scope, excluded);
         render();
       };
     });
